@@ -8,7 +8,7 @@ data analysis workflows.
 
 __version__ = "0.1.0"
 __author__ = "Aaron Sharpe"
-__email__ = "measureme@aaronsharpe.science"
+__email__ = "aaron@aaronsharpe.science"
 
 # Import main functionality for easy access
 from .alerts import (

@@ -94,7 +94,71 @@ class Config:
 config = Config()
 
 
-def send_discord_message(message: str, channel: str | None = None, user: str | list[str] | None = None):
+def send_discord_dm(message: str, user: str | list[str] | None = None):
+    """Send a Discord direct message to user(s).
+    
+    Args:
+        message: Message to send
+        user: Discord user(s) to send DM to - can be string or list of strings
+    """
+    
+    # Use config default if not specified
+    user = user or config.discord_user
+    
+    if not BOT_TOKEN:
+        print("❌ Discord: BOT_TOKEN not configured")
+        return False
+        
+    if not user:
+        print("❌ Discord: No user specified for DM")
+        return False
+
+    # Convert single user to list for uniform processing
+    users_to_process = user if isinstance(user, list) else [user]
+    
+    success_count = 0
+    total_users = len(users_to_process)
+    
+    for u in users_to_process:
+        u_lower = u.lower()
+        if u_lower not in USERS:
+            available = ", ".join(USERS.keys()) if USERS else "None"
+            print(f"❌ Discord: user '{u}' not found. Available: {available}")
+            continue
+            
+        user_id = USERS[u_lower]
+        
+        # Step 1: Create DM channel with the user
+        dm_url = "https://discord.com/api/v10/users/@me/channels"
+        dm_headers = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
+        dm_payload = {"recipient_id": user_id}
+        
+        try:
+            # Create DM channel
+            dm_response = requests.post(dm_url, headers=dm_headers, json=dm_payload)
+            dm_response.raise_for_status()
+            dm_data = dm_response.json()
+            dm_channel_id = dm_data["id"]
+            
+            # Step 2: Send message to DM channel
+            message_url = f"https://discord.com/api/v10/channels/{dm_channel_id}/messages"
+            message_payload = {"content": message}
+            
+            message_response = requests.post(message_url, headers=dm_headers, json=message_payload)
+            message_response.raise_for_status()
+            
+            print(f"✅ Discord DM: sent to @{u}")
+            success_count += 1
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Discord DM: failed to send to @{u} - {e}")
+            continue
+    
+    return success_count == total_users
+
+
+# Keep the old function for backward compatibility but rename it
+def send_discord_channel_message(message: str, channel: str | None = None, user: str | list[str] | None = None):
     """Send a Discord message to a named channel, optionally mentioning user(s).
     
     Args:
@@ -247,7 +311,45 @@ def send_email(message: str, subject: str = "MeasureBot Notification", to_user: 
         return False
 
 
+# Main Discord function - now defaults to DMs
+def send_discord_message(message: str, user: str | list[str] | None = None):
+    """Send a Discord direct message to user(s). This is now the default behavior.
+    
+    Args:
+        message: Message to send
+        user: Discord user(s) to send DM to - can be string or list of strings
+    """
+    return send_discord_dm(message, user)
+
+
 # Convenience functions
+def set_defaults(discord_user=None, email_user=None):
+    """Set default values for notifications. Use this in IPython for convenience.
+    Note: discord_channel is no longer needed since we use DMs by default.
+    """
+    config.set_defaults(discord_channel=None, discord_user=discord_user, email_user=email_user)
+
+
+def discord(message: str, user: str | list[str] | None = None):
+    """Short alias for send_discord_message (DMs)."""
+    return send_discord_message(message, user)
+
+
+def discord_channel(message: str, channel: str | None = None, user: str | list[str] | None = None):
+    """Send to a Discord channel (old behavior) - use this if you need channel messages."""
+    return send_discord_channel_message(message, channel, user)
+
+
+def email(message: str, subject: str = "MeasureBot Notification", to_user: str | list[str] | None = None, to_email: str | list[str] | None = None):
+    """Short alias for send_email."""
+    return send_email(message, subject, to_user, to_email)
+
+
+def alert(message: str, subject: str = "MeasureBot Alert"):
+    """Send both Discord DM and email notifications using defaults."""
+    discord_ok = send_discord_message(message)
+    email_ok = send_email(message, subject)
+    return discord_ok and email_ok
 def set_defaults(discord_channel=None, discord_user=None, email_user=None):
     """Set default values for notifications. Use this in IPython for convenience.
     
@@ -307,17 +409,6 @@ def show_config():
     print(f"  Email FROM address: {'✅ Set' if EMAIL_FROM else '❌ Missing'}")
 
 
-def discord(message: str, channel: str | None = None, user: str | list[str] | None = None):
-    """Short alias for send_discord_message.
-    
-    Args:
-        message: Message to send
-        channel: Discord channel name (optional)
-        user: Discord user(s) to mention - can be string or list of strings (optional)
-    """
-    return send_discord_message(message, channel, user)
-
-
 def email(message: str, subject: str = "MeasureBot Notification", to_user: str | list[str] | None = None, to_email: str | list[str] | None = None):
     """Short alias for send_email.
     
@@ -340,17 +431,17 @@ def alert(message: str, subject: str = "MeasureBot Alert"):
 def main():
     """Test the notification functions."""
     print("Testing MeasureBot...")
-    print(f"Available Discord channels: {', '.join(CHANNELS.keys()) if CHANNELS else 'None'}")
     print(f"Available Discord users: {', '.join(USERS.keys()) if USERS else 'None'}")
     print(f"Available email recipients: {', '.join(EMAIL_RECIPIENTS.keys()) if EMAIL_RECIPIENTS else 'None'}")
+    print("Note: Discord now uses DMs by default instead of channels")
     
     # Test Discord if configured
-    if BOT_TOKEN and CHANNELS:
+    if BOT_TOKEN and USERS:
         try:        
-            channel = list(CHANNELS.keys())[0]
-            send_discord_message("Test from MeasureBot", channel=channel)
+            user = list(USERS.keys())[0]
+            send_discord_message("Test DM from MeasureBot", user=user)
         except Exception as e:
-            print(f"Discord failed: {e}")
+            print(f"Discord DM failed: {e}")
     else:
         print("Discord not configured")
     
