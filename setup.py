@@ -1,10 +1,21 @@
 from setuptools import setup, find_packages
+import os
 
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+# Read README
+readme_path = os.path.join(os.path.dirname(__file__), "README.md")
+if os.path.exists(readme_path):
+    with open(readme_path, "r", encoding="utf-8") as fh:
+        long_description = fh.read()
+else:
+    long_description = "Simple bot for notifications via Discord and email"
 
-with open("requirements.txt", "r", encoding="utf-8") as fh:
-    requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
+# Read requirements
+requirements_path = os.path.join(os.path.dirname(__file__), "requirements.txt")
+if os.path.exists(requirements_path):
+    with open(requirements_path, "r", encoding="utf-8") as fh:
+        requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
+else:
+    requirements = ["requests"]  # fallback to minimal requirements
 
 setup(
     name="measurebot",
@@ -19,7 +30,6 @@ setup(
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Science/Research",
-        "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",
@@ -31,4 +41,5 @@ setup(
     python_requires=">=3.8",
     install_requires=requirements,
     include_package_data=True,
+    license="MIT",
 )
