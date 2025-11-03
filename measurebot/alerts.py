@@ -401,7 +401,7 @@ def send_slack_dm(message: str, user: str | list[str] | None = None):
             send_data = send_resp.json()
             
             if send_data.get("ok"):
-                print(f"✅ Slack DM: sent to @{u} (real DM)")
+                print(f"✅ Slack DM: sent to @{u}")
                 success_count += 1
             else:
                 print(f"❌ Slack DM: failed to send to @{u} - {send_data.get('error', 'Unknown error')}")
@@ -499,23 +499,32 @@ def send_discord_message(message: str, user: str | list[str] | None = None):
     return send_discord_dm(message, user)
 
 
-# Main Slack function - defaults to DMs
-def send_slack_message(message: str, user: str | list[str] | None = None):
-    """Send a Slack direct message to user(s). This is the default behavior.
+# Main Slack function - uses channel @mentions if available, falls back to DMs
+def send_slack_message(message: str, user: str | list[str] | None = None, channel: str | None = None):
+    """Send a Slack message with @mentions for reliable phone notifications, or DM if no channel.
     
     Args:
         message: Message to send
-        user: Slack user(s) to send DM to - can be string or list of strings
+        user: Slack user(s) to mention - can be string or list of strings
+        channel: Slack channel to send to (uses default if not specified, falls back to DM if none)
     """
-    return send_slack_dm(message, user)
+    # Use config default channel if not specified
+    channel = channel or config.slack_channel
+    
+    # If we have a channel available, use channel messages with @mentions (better notifications)
+    if channel and channel in SLACK_CHANNELS:
+        return send_slack_channel_message(message, channel, user)
+    else:
+        # Fall back to DMs if no channel configured
+        return send_slack_dm(message, user)
 
 
 # Convenience functions
-def set_defaults(discord_user=None, slack_user=None, email_user=None):
+def set_defaults(discord_user=None, slack_user=None, slack_channel=None, email_user=None):
     """Set default values for notifications. Use this in IPython for convenience.
-    Note: channels are no longer needed since we use DMs by default.
+    Note: Slack now uses channel messages with @mentions for better phone notifications.
     """
-    config.set_defaults(discord_user=discord_user, slack_user=slack_user, email_user=email_user)
+    config.set_defaults(discord_user=discord_user, slack_user=slack_user, slack_channel=slack_channel, email_user=email_user)
 
 
 def discord(message: str, user: str | list[str] | None = None):
@@ -603,38 +612,11 @@ if __name__ == "__main__":
     main()
 
 
-def main():
-    """Set default values for notifications. Use this in IPython for convenience.
-    
-    Args:
-        discord_channel: Default Discord channel name
-        discord_user: Default Discord user(s) - can be string or list of strings
-        email_user: Default email user(s) - can be string or list of strings
-    
-    Examples:
-        # Single users
-        set_defaults(discord_channel="alerts", discord_user="john", email_user="john")
-        
-        # Multiple users
-        set_defaults(
-            discord_channel="team-alerts", 
-            discord_user=["john", "jane", "bob"],
-            email_user=["john", "jane"]
-        )
-    """
-    config.set_defaults(discord_channel, discord_user, email_user)
-
-
 def show_config():
     """Display current configuration and available options."""
     print("=== MeasureBot Configuration ===")
     
     # Show defaults
-    if config.discord_channel:
-        print(f"Default Discord channel: #{config.discord_channel}")
-    else:
-        print("Default Discord channel: None")
-        
     if config.discord_user:
         if isinstance(config.discord_user, list):
             print(f"Default Discord users: {', '.join([f'@{u}' for u in config.discord_user])}")
@@ -642,6 +624,19 @@ def show_config():
             print(f"Default Discord user: @{config.discord_user}")
     else:
         print("Default Discord user: None")
+        
+    if config.slack_channel:
+        print(f"Default Slack channel: #{config.slack_channel}")
+    else:
+        print("Default Slack channel: None")
+        
+    if config.slack_user:
+        if isinstance(config.slack_user, list):
+            print(f"Default Slack users: {', '.join([f'@{u}' for u in config.slack_user])}")
+        else:
+            print(f"Default Slack user: @{config.slack_user}")
+    else:
+        print("Default Slack user: None")
         
     if config.email_user:
         if isinstance(config.email_user, list):
@@ -652,9 +647,12 @@ def show_config():
         print("Default email user: None")
     
     print()
-    print("Available Discord channels:", ", ".join(CHANNELS.keys()) if CHANNELS else "None")
     print("Available Discord users:", ", ".join(USERS.keys()) if USERS else "None")
+    print("Available Slack channels:", ", ".join(SLACK_CHANNELS.keys()) if SLACK_CHANNELS else "None")
+    print("Available Slack users:", ", ".join(SLACK_USERS.keys()) if SLACK_USERS else "None")
     print("Available email users:", ", ".join(EMAIL_RECIPIENTS.keys()) if EMAIL_RECIPIENTS else "None")
+    print()
+    print("💡 Note: Slack now uses channel messages with @mentions for better phone notifications")
     print()
     print("Configuration status:")
     print(f"  Discord BOT_TOKEN: {'✅ Set' if BOT_TOKEN else '❌ Missing'}")
