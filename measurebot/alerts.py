@@ -46,6 +46,23 @@ EMAIL_RECIPIENTS = {
     if (m := re.match(r"EMAIL_TO_([A-Z0-9_-]+)", k, re.IGNORECASE))
 }
 
+# Slack configuration
+SLACK_TOKEN = os.getenv("SLACK_BOT_TOKEN")
+
+# Build Slack channel map from env: SLACK_CHANNEL_<NAME>=<ID>
+SLACK_CHANNELS = {
+    m.group(1).lower(): v
+    for k, v in os.environ.items()
+    if (m := re.match(r"SLACK_CHANNEL_([A-Z0-9_-]+)", k, re.IGNORECASE))
+}
+
+# Build Slack user map from env: SLACK_USER_<USERNAME>=<ID>
+SLACK_USERS = {
+    m.group(1).lower(): v
+    for k, v in os.environ.items()
+    if (m := re.match(r"SLACK_USER_([A-Z0-9_-]+)", k, re.IGNORECASE))
+}
+
 # SMTP configuration
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.resend.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -60,29 +77,38 @@ class Config:
     """Simple configuration for default channels and users."""
     discord_channel = None
     discord_user = None
+    slack_channel = None
+    slack_user = None
     email_user = None
     
     @classmethod
-    def set_defaults(cls, discord_channel=None, discord_user=None, email_user=None):
+    def set_defaults(cls, discord_user=None, slack_channel=None, slack_user=None, email_user=None):
         """Set default values for notifications.
         
         Args:
-            discord_channel: Default Discord channel name
             discord_user: Default Discord user(s) - can be string or list of strings
+            slack_channel: Default Slack channel name
+            slack_user: Default Slack user(s) - can be string or list of strings
             email_user: Default email user(s) - can be string or list of strings
         """
-        cls.discord_channel = discord_channel
         cls.discord_user = discord_user
+        cls.slack_channel = slack_channel
+        cls.slack_user = slack_user
         cls.email_user = email_user
         
         print(f"✅ Defaults set:")
-        if discord_channel:
-            print(f"   Discord channel: #{discord_channel}")
         if discord_user:
             if isinstance(discord_user, list):
                 print(f"   Discord users: {', '.join([f'@{u}' for u in discord_user])}")
             else:
                 print(f"   Discord user: @{discord_user}")
+        if slack_channel:
+            print(f"   Slack channel: #{slack_channel}")
+        if slack_user:
+            if isinstance(slack_user, list):
+                print(f"   Slack users: {', '.join([f'@{u}' for u in slack_user])}")
+            else:
+                print(f"   Slack user: @{slack_user}")
         if email_user:
             if isinstance(email_user, list):
                 print(f"   Email users: {', '.join(email_user)}")
@@ -311,6 +337,157 @@ def send_email(message: str, subject: str = "MeasureBot Notification", to_user: 
         return False
 
 
+# Slack functions
+def send_slack_dm(message: str, user: str | list[str] | None = None):
+    """Send a Slack direct message to user(s).
+    
+    Args:
+        message: Message to send
+        user: Slack user(s) to send DM to - can be string or list of strings
+    """
+    
+    # Use config default if not specified
+    user = user or config.slack_user
+    
+    if not SLACK_TOKEN:
+        print("❌ Slack: SLACK_BOT_TOKEN not configured")
+        return False
+        
+    if not user:
+        print("❌ Slack: No user specified for DM")
+        return False
+
+    # Convert single user to list for uniform processing
+    users_to_process = user if isinstance(user, list) else [user]
+    
+    success_count = 0
+    total_users = len(users_to_process)
+    
+    for u in users_to_process:
+        u_lower = u.lower()
+        if u_lower not in SLACK_USERS:
+            available = ", ".join(SLACK_USERS.keys()) if SLACK_USERS else "None"
+            print(f"❌ Slack: user '{u}' not found. Available: {available}")
+            continue
+            
+        user_id = SLACK_USERS[u_lower]
+        
+        # Step 1: Open DM channel with the user
+        dm_url = "https://slack.com/api/conversations.open"
+        dm_headers = {"Authorization": f"Bearer {SLACK_TOKEN}", "Content-Type": "application/json"}
+        dm_payload = {"users": user_id}
+        
+        try:
+            # Open DM channel
+            dm_response = requests.post(dm_url, headers=dm_headers, json=dm_payload)
+            dm_response.raise_for_status()
+            dm_data = dm_response.json()
+            
+            if not dm_data.get("ok"):
+                print(f"❌ Slack DM: failed to open channel with @{u} - {dm_data.get('error', 'Unknown error')}")
+                continue
+                
+            dm_channel_id = dm_data["channel"]["id"]
+            
+            # Step 2: Send message to DM channel
+            message_url = "https://slack.com/api/chat.postMessage"
+            message_payload = {
+                "channel": dm_channel_id,
+                "text": message
+            }
+            
+            message_response = requests.post(message_url, headers=dm_headers, json=message_payload)
+            message_response.raise_for_status()
+            message_data = message_response.json()
+            
+            if message_data.get("ok"):
+                print(f"✅ Slack DM: sent to @{u}")
+                success_count += 1
+            else:
+                print(f"❌ Slack DM: failed to send to @{u} - {message_data.get('error', 'Unknown error')}")
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Slack DM: failed to send to @{u} - {e}")
+            continue
+    
+    return success_count == total_users
+
+
+def send_slack_channel_message(message: str, channel: str | None = None, user: str | list[str] | None = None):
+    """Send a Slack message to a named channel, optionally mentioning user(s).
+    
+    Args:
+        message: Message to send
+        channel: Slack channel name
+        user: Slack user(s) to mention - can be string or list of strings
+    """
+    
+    # Use config defaults if not specified
+    channel = channel or config.slack_channel or "general"
+    user = user or config.slack_user
+    
+    if not SLACK_TOKEN:
+        print("❌ Slack: SLACK_BOT_TOKEN not configured")
+        return False
+        
+    if channel not in SLACK_CHANNELS:
+        available = ", ".join(SLACK_CHANNELS.keys()) if SLACK_CHANNELS else "None"
+        print(f"❌ Slack: channel '{channel}' not found. Available: {available}")
+        return False
+    
+    channel_id = SLACK_CHANNELS[channel]
+    url = "https://slack.com/api/chat.postMessage"
+    headers = {"Authorization": f"Bearer {SLACK_TOKEN}", "Content-Type": "application/json"}
+
+    # Handle multiple users for mentions
+    user_mentions = []
+    mentioned_users = []
+    
+    if user:
+        # Convert single user to list for uniform processing
+        users_to_process = user if isinstance(user, list) else [user]
+        
+        for u in users_to_process:
+            u_lower = u.lower()
+            if u_lower in SLACK_USERS:
+                user_id = SLACK_USERS[u_lower]
+                user_mentions.append(f"<@{user_id}>")
+                mentioned_users.append(u)
+            else:
+                available_users = ", ".join(SLACK_USERS.keys()) if SLACK_USERS else "None"
+                print(f"⚠️  Slack: user '{u}' not found. Available: {available_users}")
+    
+    # Prepare message with mentions
+    if user_mentions:
+        full_message = f"{' '.join(user_mentions)} {message}"
+    else:
+        full_message = message
+
+    payload = {
+        "channel": channel_id,
+        "text": full_message
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=payload)
+        r.raise_for_status()
+        response_data = r.json()
+        
+        if response_data.get("ok"):
+            if mentioned_users:
+                users_str = ", ".join([f"@{u}" for u in mentioned_users])
+                print(f"✅ Slack: sent to #{channel} (mentioning {users_str})")
+            else:
+                print(f"✅ Slack: sent to #{channel}")
+            return True
+        else:
+            print(f"❌ Slack: failed to send to #{channel} - {response_data.get('error', 'Unknown error')}")
+            return False
+    except Exception as e:
+        print(f"❌ Slack: failed to send to #{channel} - {e}")
+        return False
+
+
 # Main Discord function - now defaults to DMs
 def send_discord_message(message: str, user: str | list[str] | None = None):
     """Send a Discord direct message to user(s). This is now the default behavior.
@@ -322,12 +499,23 @@ def send_discord_message(message: str, user: str | list[str] | None = None):
     return send_discord_dm(message, user)
 
 
-# Convenience functions
-def set_defaults(discord_user=None, email_user=None):
-    """Set default values for notifications. Use this in IPython for convenience.
-    Note: discord_channel is no longer needed since we use DMs by default.
+# Main Slack function - defaults to DMs
+def send_slack_message(message: str, user: str | list[str] | None = None):
+    """Send a Slack direct message to user(s). This is the default behavior.
+    
+    Args:
+        message: Message to send
+        user: Slack user(s) to send DM to - can be string or list of strings
     """
-    config.set_defaults(discord_channel=None, discord_user=discord_user, email_user=email_user)
+    return send_slack_dm(message, user)
+
+
+# Convenience functions
+def set_defaults(discord_user=None, slack_user=None, email_user=None):
+    """Set default values for notifications. Use this in IPython for convenience.
+    Note: channels are no longer needed since we use DMs by default.
+    """
+    config.set_defaults(discord_user=discord_user, slack_user=slack_user, email_user=email_user)
 
 
 def discord(message: str, user: str | list[str] | None = None):
@@ -335,9 +523,19 @@ def discord(message: str, user: str | list[str] | None = None):
     return send_discord_message(message, user)
 
 
+def slack(message: str, user: str | list[str] | None = None):
+    """Short alias for send_slack_message (DMs)."""
+    return send_slack_message(message, user)
+
+
 def discord_channel(message: str, channel: str | None = None, user: str | list[str] | None = None):
     """Send to a Discord channel (old behavior) - use this if you need channel messages."""
     return send_discord_channel_message(message, channel, user)
+
+
+def slack_channel(message: str, channel: str | None = None, user: str | list[str] | None = None):
+    """Send to a Slack channel - use this if you need channel messages."""
+    return send_slack_channel_message(message, channel, user)
 
 
 def email(message: str, subject: str = "MeasureBot Notification", to_user: str | list[str] | None = None, to_email: str | list[str] | None = None):
@@ -346,11 +544,66 @@ def email(message: str, subject: str = "MeasureBot Notification", to_user: str |
 
 
 def alert(message: str, subject: str = "MeasureBot Alert"):
-    """Send both Discord DM and email notifications using defaults."""
+    """Send Discord DM, Slack DM, and email notifications using defaults."""
     discord_ok = send_discord_message(message)
+    slack_ok = send_slack_message(message)
     email_ok = send_email(message, subject)
-    return discord_ok and email_ok
-def set_defaults(discord_channel=None, discord_user=None, email_user=None):
+    return discord_ok and slack_ok and email_ok
+
+
+def main():
+    """Test the notification functions."""
+    print("Testing MeasureBot...")
+    print(f"Available Discord users: {', '.join(USERS.keys()) if USERS else 'None'}")
+    print(f"Available Slack users: {', '.join(SLACK_USERS.keys()) if SLACK_USERS else 'None'}")
+    print(f"Available email recipients: {', '.join(EMAIL_RECIPIENTS.keys()) if EMAIL_RECIPIENTS else 'None'}")
+    print("Note: Discord and Slack now use DMs by default instead of channels")
+    
+    # Test Discord DM if configured
+    if BOT_TOKEN and USERS:
+        try:        
+            user = list(USERS.keys())[0]
+            send_discord_message("Test DM from MeasureBot", user=user)
+        except Exception as e:
+            print(f"Discord DM failed: {e}")
+    else:
+        print("Discord not configured")
+    
+    # Test Slack DM if configured
+    if SLACK_TOKEN and SLACK_USERS:
+        try:        
+            user = list(SLACK_USERS.keys())[0]
+            send_slack_message("Test DM from MeasureBot", user=user)
+        except Exception as e:
+            print(f"Slack DM failed: {e}")
+    else:
+        print("Slack not configured")
+    
+    # Test email if configured  
+    if SMTP_PASS and EMAIL_FROM:
+        try:
+            if EMAIL_RECIPIENTS:
+                # Test with first available user
+                user = list(EMAIL_RECIPIENTS.keys())[0]
+                send_email("Test from MeasureBot", "Test Email", to_user=user)
+            elif EMAIL_TO:
+                # Fall back to default EMAIL_TO
+                send_email("Test from MeasureBot", "Test Email")
+            else:
+                print("Email: no recipients configured")
+        except Exception as e:
+            print(f"Email test failed: {e}")
+    else:
+        print("Email not configured")
+    
+    print("Done!")
+
+
+if __name__ == "__main__":
+    main()
+
+
+def main():
     """Set default values for notifications. Use this in IPython for convenience.
     
     Args:
