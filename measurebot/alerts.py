@@ -339,7 +339,7 @@ def send_email(message: str, subject: str = "MeasureBot Notification", to_user: 
 
 # Slack functions
 def send_slack_dm(message: str, user: str | list[str] | None = None):
-    """Send a Slack direct message to user(s).
+    """Send a Slack direct message to user(s) that appears in proper DM chat.
     
     Args:
         message: Message to send
@@ -363,6 +363,11 @@ def send_slack_dm(message: str, user: str | list[str] | None = None):
     success_count = 0
     total_users = len(users_to_process)
     
+    headers = {
+        "Authorization": f"Bearer {SLACK_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    
     for u in users_to_process:
         u_lower = u.lower()
         if u_lower not in SLACK_USERS:
@@ -372,39 +377,34 @@ def send_slack_dm(message: str, user: str | list[str] | None = None):
             
         user_id = SLACK_USERS[u_lower]
         
-        # Step 1: Open DM channel with the user
-        dm_url = "https://slack.com/api/conversations.open"
-        dm_headers = {"Authorization": f"Bearer {SLACK_TOKEN}", "Content-Type": "application/json"}
-        dm_payload = {"users": user_id}
-        
         try:
-            # Open DM channel
-            dm_response = requests.post(dm_url, headers=dm_headers, json=dm_payload)
-            dm_response.raise_for_status()
-            dm_data = dm_response.json()
+            # Step 1: Open/get the DM channel with that user
+            open_resp = requests.post(
+                "https://slack.com/api/conversations.open",
+                headers=headers,
+                json={"users": user_id},
+            )
+            open_data = open_resp.json()
             
-            if not dm_data.get("ok"):
-                print(f"❌ Slack DM: failed to open channel with @{u} - {dm_data.get('error', 'Unknown error')}")
+            if not open_data.get("ok"):
+                print(f"❌ Slack DM: failed to open channel with @{u} - {open_data.get('error', 'Unknown error')}")
                 continue
-                
-            dm_channel_id = dm_data["channel"]["id"]
+
+            dm_channel_id = open_data["channel"]["id"]
+
+            # Step 2: Send the message to that DM channel
+            send_resp = requests.post(
+                "https://slack.com/api/chat.postMessage",
+                headers=headers,
+                json={"channel": dm_channel_id, "text": message},
+            )
+            send_data = send_resp.json()
             
-            # Step 2: Send message to DM channel
-            message_url = "https://slack.com/api/chat.postMessage"
-            message_payload = {
-                "channel": dm_channel_id,
-                "text": message
-            }
-            
-            message_response = requests.post(message_url, headers=dm_headers, json=message_payload)
-            message_response.raise_for_status()
-            message_data = message_response.json()
-            
-            if message_data.get("ok"):
-                print(f"✅ Slack DM: sent to @{u}")
+            if send_data.get("ok"):
+                print(f"✅ Slack DM: sent to @{u} (real DM)")
                 success_count += 1
             else:
-                print(f"❌ Slack DM: failed to send to @{u} - {message_data.get('error', 'Unknown error')}")
+                print(f"❌ Slack DM: failed to send to @{u} - {send_data.get('error', 'Unknown error')}")
             
         except requests.exceptions.RequestException as e:
             print(f"❌ Slack DM: failed to send to @{u} - {e}")
