@@ -69,8 +69,7 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "resend")
 SMTP_PASS = os.getenv("SMTP_PASS")
 EMAIL_FROM = os.getenv("EMAIL_FROM")
-_EMAIL_TO_RAW = os.getenv("EMAIL_TO", "")
-EMAIL_TO = [e.strip() for e in _EMAIL_TO_RAW.split(",") if e.strip()] or None
+EMAIL_TO = os.getenv("EMAIL_TO")  # Keep for backward compatibility
 
 
 # Configuration class for IPython usage
@@ -295,7 +294,7 @@ def send_email(message: str, subject: str = "MeasureBot Notification", to_user: 
     else:
         # Fall back to default EMAIL_TO
         if EMAIL_TO:
-            to_addresses = EMAIL_TO
+            to_addresses = [EMAIL_TO]
     
     if not SMTP_PASS:
         print("❌ Email: SMTP_PASS not configured")
