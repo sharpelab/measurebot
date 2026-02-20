@@ -20,7 +20,12 @@ Config file example (JSON)::
 
     {
         "poll_interval": 30,
-        "email": ["aaron@aaronsharpe.science", "zack.gomez@gmail.com"],
+        "notify": {
+            "email": ["aaron@aaronsharpe.science", "zack.gomez@gmail.com"],
+            "slack_users": ["asharpe", "zack"],
+            "slack_channel": "alerts",
+            "discord_users": ["asharpe"]
+        },
         "warn": {
             "battery_pct": 50,
             "on_battery_min": 5,
@@ -32,6 +37,9 @@ Config file example (JSON)::
             "runtime_min": 10
         }
     }
+
+Credentials (bot tokens, SMTP keys) go in .env, not the config file.
+Routing (who to notify) goes in the config file, not .env.
 """
 
 from __future__ import annotations
@@ -72,11 +80,46 @@ class ThresholdConfig:
 
 
 @dataclass
+class NotifyConfig:
+    """Notification routing (who to alert, not credentials)."""
+
+    email: list[str] = field(default_factory=list)
+    slack_users: list[str] = field(default_factory=list)
+    slack_channel: str | None = None
+    discord_users: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> NotifyConfig:
+        cfg = cls()
+        if "email" in data:
+            cfg.email = data["email"] if isinstance(data["email"], list) else [data["email"]]
+        if "slack_users" in data:
+            cfg.slack_users = data["slack_users"] if isinstance(data["slack_users"], list) else [data["slack_users"]]
+        if "slack_channel" in data:
+            cfg.slack_channel = data["slack_channel"]
+        if "discord_users" in data:
+            cfg.discord_users = data["discord_users"] if isinstance(data["discord_users"], list) else [data["discord_users"]]
+        return cfg
+
+    def summary(self) -> str:
+        parts = []
+        if self.email:
+            parts.append(f"email: {', '.join(self.email)}")
+        if self.slack_users:
+            parts.append(f"slack DM: {', '.join(self.slack_users)}")
+        if self.slack_channel:
+            parts.append(f"slack #{self.slack_channel}")
+        if self.discord_users:
+            parts.append(f"discord DM: {', '.join(self.discord_users)}")
+        return " | ".join(parts) if parts else "none"
+
+
+@dataclass
 class MonitorConfig:
     """Full monitor configuration."""
 
     poll_interval: float = 30
-    email: list[str] = field(default_factory=list)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
     warn: ThresholdConfig = field(default_factory=lambda: ThresholdConfig(battery_pct=50, on_battery_min=5, runtime_min=30))
     crit: ThresholdConfig = field(default_factory=lambda: ThresholdConfig(battery_pct=20, on_battery_min=10, runtime_min=10))
 
@@ -87,8 +130,8 @@ class MonitorConfig:
         cfg = cls()
         if "poll_interval" in data:
             cfg.poll_interval = data["poll_interval"]
-        if "email" in data:
-            cfg.email = data["email"] if isinstance(data["email"], list) else [data["email"]]
+        if "notify" in data:
+            cfg.notify = NotifyConfig.from_dict(data["notify"])
         if "warn" in data:
             cfg.warn = ThresholdConfig(**data["warn"])
         if "crit" in data:
@@ -204,25 +247,35 @@ class UPSMonitor:
                 log.exception("Event callback failed for %s", event)
 
 
-def _make_alerter(config: MonitorConfig):
+def _make_alerter(notify: NotifyConfig):
     """Create an alert callback using measurebot.alerts if configured."""
     try:
-        from measurebot.alerts import send_email, send_discord_message, send_slack_message
+        from measurebot.alerts import send_email, send_discord_dm, send_slack_dm, send_slack_channel_message
 
         def _alert(event: str, status: UPSStatus, message: str) -> None:
             subject = f"UPS: {event}"
             body = f"UPS: {message}"
-            try:
-                send_discord_message(body)
-            except Exception:
-                log.debug("Discord send failed", exc_info=True)
-            try:
-                send_slack_message(body)
-            except Exception:
-                log.debug("Slack send failed", exc_info=True)
-            if config.email:
+
+            if notify.discord_users:
                 try:
-                    send_email(body, subject=subject, to_email=config.email)
+                    send_discord_dm(body, user=notify.discord_users)
+                except Exception:
+                    log.debug("Discord send failed", exc_info=True)
+
+            if notify.slack_channel:
+                try:
+                    send_slack_channel_message(body, channel=notify.slack_channel, user=notify.slack_users or None)
+                except Exception:
+                    log.debug("Slack channel send failed", exc_info=True)
+            elif notify.slack_users:
+                try:
+                    send_slack_dm(body, user=notify.slack_users)
+                except Exception:
+                    log.debug("Slack DM send failed", exc_info=True)
+
+            if notify.email:
+                try:
+                    send_email(body, subject=subject, to_email=notify.email)
                 except Exception:
                     log.debug("Email send failed", exc_info=True)
 
@@ -294,17 +347,17 @@ def main() -> None:
         return
 
     # Daemon mode
-    alerter = _make_alerter(config)
+    alerter = _make_alerter(config.notify)
     monitor = UPSMonitor(reader, config, on_event=alerter)
 
     log.info(
-        "Monitoring every %gs — warn: %s, crit: %s, email: %s",
+        "Monitoring every %gs — warn: %s, crit: %s, notify: %s",
         config.poll_interval,
         f"pct<={config.warn.battery_pct} / time>={config.warn.on_battery_min}min / runtime<={config.warn.runtime_min}min"
         if config.warn.any_set() else "disabled",
         f"pct<={config.crit.battery_pct} / time>={config.crit.on_battery_min}min / runtime<={config.crit.runtime_min}min"
         if config.crit.any_set() else "disabled",
-        ", ".join(config.email) if config.email else "none",
+        config.notify.summary(),
     )
 
     try:

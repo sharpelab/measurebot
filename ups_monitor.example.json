@@ -1,9 +1,11 @@
 {
     "poll_interval": 30,
-    "email": [
-        "aaron@aaronsharpe.science",
-        "zack.gomez@gmail.com"
-    ],
+    "notify": {
+        "email": ["aaron@aaronsharpe.science", "zack.gomez@gmail.com"],
+        "slack_users": ["asharpe"],
+        "slack_channel": "alerts",
+        "discord_users": ["asharpe"]
+    },
     "warn": {
         "battery_pct": 50,
         "on_battery_min": 5,
