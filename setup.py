@@ -40,6 +40,14 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=requirements,
+    extras_require={
+        "ups": ["hidapi"],
+    },
+    entry_points={
+        "console_scripts": [
+            "ups-monitor=measurebot.ups_monitor:main",
+        ],
+    },
     include_package_data=True,
     license="MIT",
 )
