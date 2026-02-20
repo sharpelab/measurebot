@@ -1,0 +1,17 @@
+{
+    "poll_interval": 30,
+    "email": [
+        "aaron@aaronsharpe.science",
+        "zack.gomez@gmail.com"
+    ],
+    "warn": {
+        "battery_pct": 50,
+        "on_battery_min": 5,
+        "runtime_min": 30
+    },
+    "crit": {
+        "battery_pct": 20,
+        "on_battery_min": 10,
+        "runtime_min": 10
+    }
+}
