@@ -6,14 +6,19 @@
         "slack_channel": "alerts",
         "discord_users": ["asharpe"]
     },
-    "warn": {
-        "battery_pct": 50,
-        "on_battery_min": 5,
-        "runtime_min": 30
-    },
-    "crit": {
-        "battery_pct": 20,
-        "on_battery_min": 10,
-        "runtime_min": 10
+    "events": {
+        "power_lost": true,
+        "power_restored": true,
+        "battery_update": 300,
+        "warn": {
+            "battery_pct": 50,
+            "on_battery_min": 5,
+            "runtime_min": 30
+        },
+        "crit": {
+            "battery_pct": 20,
+            "on_battery_min": 10,
+            "runtime_min": 10
+        }
     }
 }

@@ -26,18 +26,24 @@ Config file example (JSON)::
             "slack_channel": "alerts",
             "discord_users": ["asharpe"]
         },
-        "warn": {
-            "battery_pct": 50,
-            "on_battery_min": 5,
-            "runtime_min": 30
-        },
-        "crit": {
-            "battery_pct": 20,
-            "on_battery_min": 10,
-            "runtime_min": 10
+        "events": {
+            "power_lost": true,
+            "power_restored": true,
+            "battery_update": 300,
+            "warn": {
+                "battery_pct": 50,
+                "on_battery_min": 5,
+                "runtime_min": 30
+            },
+            "crit": {
+                "battery_pct": 20,
+                "on_battery_min": 10,
+                "runtime_min": 10
+            }
         }
     }
 
+All events are configurable. Omit an event to disable it.
 Credentials (bot tokens, SMTP keys) go in .env, not the config file.
 Routing (who to notify) goes in the config file, not .env.
 """
@@ -77,6 +83,57 @@ class ThresholdConfig:
         if self.runtime_min is not None and status.runtime_min <= self.runtime_min:
             return f"runtime {status.runtime_min:.0f} min <= {self.runtime_min} min"
         return None
+
+    def summary(self) -> str:
+        parts = []
+        if self.battery_pct is not None:
+            parts.append(f"pct<={self.battery_pct}")
+        if self.on_battery_min is not None:
+            parts.append(f"time>={self.on_battery_min}min")
+        if self.runtime_min is not None:
+            parts.append(f"runtime<={self.runtime_min}min")
+        return " / ".join(parts)
+
+
+@dataclass
+class EventsConfig:
+    """Which events to fire and their thresholds."""
+
+    power_lost: bool = True
+    power_restored: bool = True
+    battery_update: int | None = 300  # seconds, or None to disable
+    warn: ThresholdConfig | None = None
+    crit: ThresholdConfig | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> EventsConfig:
+        cfg = cls()
+        if "power_lost" in data:
+            cfg.power_lost = bool(data["power_lost"])
+        if "power_restored" in data:
+            cfg.power_restored = bool(data["power_restored"])
+        if "battery_update" in data:
+            val = data["battery_update"]
+            cfg.battery_update = int(val) if val else None
+        if "warn" in data:
+            cfg.warn = ThresholdConfig(**data["warn"])
+        if "crit" in data:
+            cfg.crit = ThresholdConfig(**data["crit"])
+        return cfg
+
+    def summary(self) -> str:
+        parts = []
+        if self.power_lost:
+            parts.append("power_lost")
+        if self.power_restored:
+            parts.append("power_restored")
+        if self.battery_update:
+            parts.append(f"update@{self.battery_update}s")
+        if self.warn and self.warn.any_set():
+            parts.append(f"warn({self.warn.summary()})")
+        if self.crit and self.crit.any_set():
+            parts.append(f"crit({self.crit.summary()})")
+        return ", ".join(parts) if parts else "none"
 
 
 @dataclass
@@ -120,8 +177,7 @@ class MonitorConfig:
 
     poll_interval: float = 30
     notify: NotifyConfig = field(default_factory=NotifyConfig)
-    warn: ThresholdConfig = field(default_factory=lambda: ThresholdConfig(battery_pct=50, on_battery_min=5, runtime_min=30))
-    crit: ThresholdConfig = field(default_factory=lambda: ThresholdConfig(battery_pct=20, on_battery_min=10, runtime_min=10))
+    events: EventsConfig = field(default_factory=EventsConfig)
 
     @classmethod
     def from_file(cls, path: str | Path) -> MonitorConfig:
@@ -132,18 +188,15 @@ class MonitorConfig:
             cfg.poll_interval = data["poll_interval"]
         if "notify" in data:
             cfg.notify = NotifyConfig.from_dict(data["notify"])
-        if "warn" in data:
-            cfg.warn = ThresholdConfig(**data["warn"])
-        if "crit" in data:
-            cfg.crit = ThresholdConfig(**data["crit"])
+        if "events" in data:
+            cfg.events = EventsConfig.from_dict(data["events"])
         return cfg
 
 
 class UPSMonitor:
     """Monitors UPS and fires callbacks on state transitions.
 
-    Tracks AC state and fires warn/crit alerts based on configurable
-    thresholds (charge %, time on battery, estimated runtime).
+    All events are configurable via EventsConfig. Omit an event to disable it.
 
     Callbacks receive (event_name, current_status, message).
     """
@@ -170,6 +223,7 @@ class UPSMonitor:
         """Read UPS and fire events on state changes. Returns current status."""
         status = self.reader.read()
         now = time.time()
+        events = self.config.events
 
         # AC state transition
         if self._prev_ac is not None and status.ac_present != self._prev_ac:
@@ -179,31 +233,33 @@ class UPSMonitor:
                 self._last_periodic = now
                 self._warn_fired = False
                 self._crit_fired = False
-                self._fire(
-                    "power_lost",
-                    status,
-                    f"Power lost! On battery — {status.charge_pct}% charge, "
-                    f"{status.runtime_min:.0f} min runtime",
-                )
+                if events.power_lost:
+                    self._fire(
+                        "power_lost",
+                        status,
+                        f"Power lost! On battery — {status.charge_pct}% charge, "
+                        f"{status.runtime_min:.0f} min runtime",
+                    )
             else:
                 # AC restored
                 duration = now - self._battery_since if self._battery_since else 0
                 self._battery_since = None
                 self._warn_fired = False
                 self._crit_fired = False
-                self._fire(
-                    "power_restored",
-                    status,
-                    f"Power restored after {duration / 60:.1f} min — "
-                    f"{status.charge_pct}% charge, {status.input_voltage}V input",
-                )
+                if events.power_restored:
+                    self._fire(
+                        "power_restored",
+                        status,
+                        f"Power restored after {duration / 60:.1f} min — "
+                        f"{status.charge_pct}% charge, {status.input_voltage}V input",
+                    )
 
         # Threshold checks (only while on battery)
         if status.on_battery and self._battery_since is not None:
             on_battery_sec = now - self._battery_since
 
-            if not self._warn_fired:
-                reason = self.config.warn.check(status, on_battery_sec)
+            if events.warn and not self._warn_fired:
+                reason = events.warn.check(status, on_battery_sec)
                 if reason:
                     self._warn_fired = True
                     self._fire(
@@ -213,8 +269,8 @@ class UPSMonitor:
                         f"{status.charge_pct}%, {status.runtime_min:.0f} min remaining",
                     )
 
-            if not self._crit_fired:
-                reason = self.config.crit.check(status, on_battery_sec)
+            if events.crit and not self._crit_fired:
+                reason = events.crit.check(status, on_battery_sec)
                 if reason:
                     self._crit_fired = True
                     self._fire(
@@ -224,8 +280,8 @@ class UPSMonitor:
                         f"{status.charge_pct}%, {status.runtime_min:.0f} min remaining",
                     )
 
-            # Periodic update while on battery (every 5 min)
-            if now - self._last_periodic >= 300:
+            # Periodic update while on battery
+            if events.battery_update and now - self._last_periodic >= events.battery_update:
                 self._last_periodic = now
                 self._fire(
                     "battery_update",
@@ -351,12 +407,9 @@ def main() -> None:
     monitor = UPSMonitor(reader, config, on_event=alerter)
 
     log.info(
-        "Monitoring every %gs — warn: %s, crit: %s, notify: %s",
+        "Monitoring every %gs — events: [%s] — notify: %s",
         config.poll_interval,
-        f"pct<={config.warn.battery_pct} / time>={config.warn.on_battery_min}min / runtime<={config.warn.runtime_min}min"
-        if config.warn.any_set() else "disabled",
-        f"pct<={config.crit.battery_pct} / time>={config.crit.on_battery_min}min / runtime<={config.crit.runtime_min}min"
-        if config.crit.any_set() else "disabled",
+        config.events.summary(),
         config.notify.summary(),
     )
 
