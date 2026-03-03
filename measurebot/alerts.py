@@ -6,11 +6,15 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # Load environment variables from .env file if it exists.
-# Search order: $MEASUREBOT_ENV, cwd/.env, package-adjacent .env
+# Search order: $MEASUREBOT_ENV, ~/.config/measurebot/.env, cwd/.env, package-adjacent .env
 def _find_env_file():
+    from pathlib import Path
     explicit = os.environ.get("MEASUREBOT_ENV")
     if explicit and os.path.isfile(explicit):
         return explicit
+    config_env = Path.home() / ".config" / "measurebot" / ".env"
+    if config_env.is_file():
+        return str(config_env)
     cwd_env = os.path.join(os.getcwd(), ".env")
     if os.path.isfile(cwd_env):
         return cwd_env
