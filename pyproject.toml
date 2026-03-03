@@ -1,0 +1,19 @@
+[project]
+name = "measurebot"
+version = "0.1.0"
+description = "Simple bot for notifications via Discord and email"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [{ name = "Aaron Sharpe", email = "measureme@aaronsharpe.science" }]
+dependencies = ["requests"]
+
+[project.optional-dependencies]
+ups = ["hidapi"]
+
+[project.scripts]
+ups-monitor = "measurebot.ups_monitor:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
