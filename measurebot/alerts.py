@@ -5,10 +5,23 @@ import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# Load environment variables from .env file if it exists
-env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-if os.path.exists(env_file):
-    with open(env_file) as f:
+# Load environment variables from .env file if it exists.
+# Search order: $MEASUREBOT_ENV, cwd/.env, package-adjacent .env
+def _find_env_file():
+    explicit = os.environ.get("MEASUREBOT_ENV")
+    if explicit and os.path.isfile(explicit):
+        return explicit
+    cwd_env = os.path.join(os.getcwd(), ".env")
+    if os.path.isfile(cwd_env):
+        return cwd_env
+    pkg_env = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if os.path.isfile(pkg_env):
+        return pkg_env
+    return None
+
+_env_file = _find_env_file()
+if _env_file:
+    with open(_env_file) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith('#') and '=' in line:
