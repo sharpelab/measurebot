@@ -1,6 +1,8 @@
 import os
 import re
 import smtplib
+from pathlib import Path
+
 import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -8,7 +10,6 @@ from email.mime.multipart import MIMEMultipart
 # Load environment variables from .env file if it exists.
 # Search order: $MEASUREBOT_ENV, ~/.config/measurebot/.env, cwd/.env, package-adjacent .env
 def _find_env_file():
-    from pathlib import Path
     explicit = os.environ.get("MEASUREBOT_ENV")
     if explicit and os.path.isfile(explicit):
         return explicit
